@@ -192,16 +192,37 @@ jobs:
         id: deploy
         run: |
           # Check if stack exists
-          if aws cloudformation describe-stacks \
-              --stack-name ${{ env.STACK_NAME }} \
-              --region ${{ env.AWS_REGION }} 2>&1 | grep -q 'does not exist'; then
-            echo "Creating new stack..."
-            COMMAND="create-stack"
-            WAIT_COMMAND="stack-create-complete"
+          if aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+            STATUS=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} --query "Stacks[0].StackStatus" --output text)
+            echo "Stack ${{ env.STACK_NAME }} exists with status: $STATUS"
+            # Check if stack in correct state
+            if [[ $STATUS != "CREATE_COMPLETE" && $STATUS != "UPDATE_COMPLETE" ]]; then
+              echo "Warning: Stack is in a FAILED state!"
+              echo "Deleting failed stack before creating a new one..."
+              aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }}
+              echo "Waiting for stack deletion to complete..."
+              # Set a timeout for the wait command (300 seconds = 5 minutes)
+              timeout 300 aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }}
+
+              WAIT_RESULT=$?
+        
+              if [ $WAIT_RESULT -eq 0 ]; then
+                echo "Failed stack deleted successfully."
+              else
+                echo "Warning: Stack deletion wait timed out or failed. Continuing anyway..."
+                # Add a sleep to give more time for deletion to progress
+                sleep 30
+              fi
+              COMMAND="create-stack"
+              WAIT_COMMAND="stack-create-complete"
+            else
+              echo "Info: We can use update stack!"
+              COMMAND="UPDATE"  
+              WAIT_COMMAND="stack-update-complete"
+              echo $COMMAND
+            fi
           else
-            echo "Updating existing stack..."
-            COMMAND="update-stack"
-            WAIT_COMMAND="stack-update-complete"
+            echo "Stack ${{ env.STACK_NAME }} does not exist"
           fi
           
           # Deploy stack
