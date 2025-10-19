@@ -114,8 +114,9 @@ namespace NoteService.DAL
 
             // Add sorting
             var validSortColumns = new[] { "created_at", "updated_at", "content" };
-            var sortColumn = validSortColumns.Contains(sortBy?.ToLower())
-                ? sortBy.ToLower()
+            var sortColumn = !string.IsNullOrWhiteSpace(sortBy) &&
+                   validSortColumns.Contains(sortBy.ToLower())
+                ? sortBy.ToLower() 
                 : "created_at";
 
             var sortDirection = sortOrder?.ToUpper() == "ASC" ? "ASC" : "DESC";

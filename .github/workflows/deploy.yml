@@ -221,7 +221,7 @@ jobs:
             STATUS=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} --query "Stacks[0].StackStatus" --output text)
             echo "Stack exists: $STATUS"
             
-            if [[ $STATUS == *"FAILED"* ]] || [[ $STATUS == "ROLLBACK_COMPLETE" ]]; then
+            if [[ $STATUS != "CREATE_COMPLETE" && $STATUS != "UPDATE_COMPLETE" ]]; then
               echo "Deleting failed stack..."
               aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }}
               aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} || true
