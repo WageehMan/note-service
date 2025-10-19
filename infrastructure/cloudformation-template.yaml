@@ -1,0 +1,665 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Notes Service - Complete Infrastructure for TFS Complex Integrations Assignment'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+
+  PostgreSQLHost:
+    Type: String
+    Description: PostgreSQL database host (use localhost for Docker or RDS endpoint)
+    Default: localhost
+
+  PostgreSQLPort:
+    Type: String
+    Default: '5432'
+    Description: PostgreSQL database port
+
+  PostgreSQLDatabase:
+    Type: String
+    Default: notesdb
+    Description: PostgreSQL database name
+
+  PostgreSQLUsername:
+    Type: String
+    Default: notesuser
+    Description: PostgreSQL username
+
+  PostgreSQLPassword:
+    Type: String
+    NoEcho: true
+    Description: PostgreSQL password
+    MinLength: 8
+
+  BedrockModelId:
+    Type: String
+    Description: AWS Bedrock Model ID for summarization
+    Default: anthropic.claude-3-haiku-20240307-v1:0
+    AllowedValues:
+      - anthropic.claude-3-haiku-20240307-v1:0
+      - anthropic.claude-3-sonnet-20240229-v1:0
+      - anthropic.claude-v2:1
+      - amazon.titan-text-express-v1
+
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment packages
+    Default: my-lambda-deployments
+
+  NoteCrudLambdaKey:
+    Type: String
+    Description: S3 key for NOTE CRUD Lambda zip file
+    Default: note-crud-lambda.zip
+
+  SummarizeLambdaKey:
+    Type: String
+    Description: S3 key for Summarize Lambda zip file
+    Default: summarize-lambda.zip
+
+Resources:
+  # ========================================
+  # SNS Topic for Note Events
+  # ========================================
+  NoteEventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${Environment}-note-events'
+      DisplayName: Note Events Topic
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: NotesService
+
+  # ========================================
+  # SQS Dead Letter Queue
+  # ========================================
+  SummarizeDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${Environment}-summarize-dlq'
+      MessageRetentionPeriod: 1209600  # 14 days
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: NotesService
+
+  # ========================================
+  # SQS Queue for Summarization
+  # ========================================
+  SummarizeQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${Environment}-summarize-queue'
+      VisibilityTimeout: 300  # 5 minutes (should be >= Lambda timeout)
+      MessageRetentionPeriod: 345600  # 4 days
+      ReceiveMessageWaitTimeSeconds: 20  # Long polling
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt SummarizeDeadLetterQueue.Arn
+        maxReceiveCount: 3  # Retry 3 times before DLQ
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: NotesService
+
+  # ========================================
+  # SQS Queue Policy
+  # ========================================
+  SummarizeQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref SummarizeQueue
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action:
+              - sqs:SendMessage
+            Resource: !GetAtt SummarizeQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref NoteEventsTopic
+
+  # ========================================
+  # SNS Subscription to SQS
+  # ========================================
+  NoteEventsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: sqs
+      TopicArn: !Ref NoteEventsTopic
+      Endpoint: !GetAtt SummarizeQueue.Arn
+      RawMessageDelivery: true
+
+  # ========================================
+  # IAM Role for NOTE CRUD Lambda
+  # ========================================
+  NoteCrudLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-NoteCrudLambdaRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: NoteCrudLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # SNS Publish Permission
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref NoteEventsTopic
+              # CloudWatch Logs
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${Environment}-note-crud:*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: NotesService
+
+  # ========================================
+  # IAM Role for Summarize Lambda
+  # ========================================
+  SummarizeLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${Environment}-SummarizeLambdaRole'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SummarizeLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # SQS Permissions
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ChangeMessageVisibility
+                Resource: !GetAtt SummarizeQueue.Arn
+              # AWS Bedrock Permissions
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: 
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}::foundation-model/*'
+              # CloudWatch Logs
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${Environment}-summarize:*'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: NotesService
+
+  # ========================================
+  # NOTE CRUD Lambda Function
+  # ========================================
+  NoteCrudLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-note-crud'
+      Runtime: dotnet8
+      Handler: NoteCrud::NoteCrud.Function::FunctionHandler
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref NoteCrudLambdaKey
+      Role: !GetAtt NoteCrudLambdaRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DB_HOST: !Ref PostgreSQLHost
+          DB_PORT: !Ref PostgreSQLPort
+          DB_NAME: !Ref PostgreSQLDatabase
+          DB_USER: !Ref PostgreSQLUsername
+          DB_PASSWORD: !Ref PostgreSQLPassword
+          SNS_TOPIC_ARN: !Ref NoteEventsTopic
+          CONNECTION_STRING: !Sub 'Host=${PostgreSQLHost};Port=${PostgreSQLPort};Database=${PostgreSQLDatabase};Username=${PostgreSQLUsername};Password=${PostgreSQLPassword};'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: NotesService
+
+  # ========================================
+  # Summarize Lambda Function
+  # ========================================
+  SummarizeLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-summarize'
+      Runtime: dotnet8
+      Handler: Summarize::Summarize.Function::FunctionHandler
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref SummarizeLambdaKey
+      Role: !GetAtt SummarizeLambdaRole.Arn
+      Timeout: 300  # 5 minutes for AI processing
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          DB_HOST: !Ref PostgreSQLHost
+          DB_PORT: !Ref PostgreSQLPort
+          DB_NAME: !Ref PostgreSQLDatabase
+          DB_USER: !Ref PostgreSQLUsername
+          DB_PASSWORD: !Ref PostgreSQLPassword
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          AWS_BEDROCK_REGION: !Ref AWS::Region
+          CONNECTION_STRING: !Sub 'Host=${PostgreSQLHost};Port=${PostgreSQLPort};Database=${PostgreSQLDatabase};Username=${PostgreSQLUsername};Password=${PostgreSQLPassword};'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: NotesService
+
+  # ========================================
+  # SQS Event Source Mapping for Summarize Lambda
+  # ========================================
+  SummarizeLambdaEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt SummarizeQueue.Arn
+      FunctionName: !GetAtt SummarizeLambda.Arn
+      BatchSize: 1  # Process one message at a time
+      Enabled: true
+
+  # ========================================
+  # CloudWatch Log Groups
+  # ========================================
+  NoteCrudLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Environment}-note-crud'
+      RetentionInDays: 14
+
+  SummarizeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${Environment}-summarize'
+      RetentionInDays: 14
+
+  # ========================================
+  # API Gateway REST API
+  # ========================================
+  NotesApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${Environment}-notes-api'
+      Description: Notes Service API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # ========================================
+  # API Gateway Resources
+  # ========================================
+  NotesResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt NotesApi.RootResourceId
+      PathPart: notes
+      RestApiId: !Ref NotesApi
+
+  NoteByIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !Ref NotesResource
+      PathPart: '{id}'
+      RestApiId: !Ref NotesApi
+
+  # ========================================
+  # API Gateway Methods - /notes (GET, POST)
+  # ========================================
+  NotesGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NotesApi
+      ResourceId: !Ref NotesResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${NoteCrudLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  NotesPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NotesApi
+      ResourceId: !Ref NotesResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${NoteCrudLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # ========================================
+  # API Gateway Methods - /notes/{id} (GET, PUT, DELETE)
+  # ========================================
+  NoteByIdGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NotesApi
+      ResourceId: !Ref NoteByIdResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${NoteCrudLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  NoteByIdPutMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NotesApi
+      ResourceId: !Ref NoteByIdResource
+      HttpMethod: PUT
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${NoteCrudLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseModels:
+            application/json: Empty
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  NoteByIdDeleteMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NotesApi
+      ResourceId: !Ref NoteByIdResource
+      HttpMethod: DELETE
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${NoteCrudLambda.Arn}/invocations'
+      MethodResponses:
+        - StatusCode: 204
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # ========================================
+  # CORS Options Methods
+  # ========================================
+  NotesOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NotesApi
+      ResourceId: !Ref NotesResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  NoteByIdOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NotesApi
+      ResourceId: !Ref NoteByIdResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # ========================================
+  # Lambda Permissions for API Gateway
+  # ========================================
+  NoteCrudLambdaApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NoteCrudLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${NotesApi}/*/*/*'
+
+  # ========================================
+  # API Gateway Deployment
+  # ========================================
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - NotesGetMethod
+      - NotesPostMethod
+      - NoteByIdGetMethod
+      - NoteByIdPutMethod
+      - NoteByIdDeleteMethod
+      - NotesOptionsMethod
+      - NoteByIdOptionsMethod
+    Properties:
+      RestApiId: !Ref NotesApi
+      Description: !Sub '${Environment} deployment'
+
+  # ========================================
+  # API Gateway Stage
+  # ========================================
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref NotesApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: !Ref Environment
+      Description: !Sub '${Environment} stage'
+      TracingEnabled: true
+      MethodSettings:
+        - ResourcePath: /*
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+
+  # ========================================
+  # CloudWatch Alarms
+  # ========================================
+  NoteCrudErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-note-crud-errors'
+      AlarmDescription: Alert when NOTE CRUD Lambda has errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref NoteCrudLambda
+
+  SummarizeErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-summarize-errors'
+      AlarmDescription: Alert when Summarize Lambda has errors
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SummarizeLambda
+
+  DLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-summarize-dlq-messages'
+      AlarmDescription: Alert when messages end up in DLQ
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt SummarizeDeadLetterQueue.QueueName
+
+# ========================================
+# Outputs
+# ========================================
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${NotesApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/notes'
+    Export:
+      Name: !Sub '${Environment}-NotesApiEndpoint'
+
+  NoteCrudLambdaArn:
+    Description: NOTE CRUD Lambda Function ARN
+    Value: !GetAtt NoteCrudLambda.Arn
+    Export:
+      Name: !Sub '${Environment}-NoteCrudLambdaArn'
+
+  SummarizeLambdaArn:
+    Description: Summarize Lambda Function ARN
+    Value: !GetAtt SummarizeLambda.Arn
+    Export:
+      Name: !Sub '${Environment}-SummarizeLambdaArn'
+
+  SNSTopicArn:
+    Description: SNS Topic ARN for note events
+    Value: !Ref NoteEventsTopic
+    Export:
+      Name: !Sub '${Environment}-NoteEventsTopicArn'
+
+  SQSQueueUrl:
+    Description: SQS Queue URL for summarization
+    Value: !Ref SummarizeQueue
+    Export:
+      Name: !Sub '${Environment}-SummarizeQueueUrl'
+
+  SQSQueueArn:
+    Description: SQS Queue ARN for summarization
+    Value: !GetAtt SummarizeQueue.Arn
+    Export:
+      Name: !Sub '${Environment}-SummarizeQueueArn'
+
+  DeadLetterQueueUrl:
+    Description: Dead Letter Queue URL
+    Value: !Ref SummarizeDeadLetterQueue
+    Export:
+      Name: !Sub '${Environment}-SummarizeDLQUrl'
+
+  ApiId:
+    Description: API Gateway ID
+    Value: !Ref NotesApi
+    Export:
+      Name: !Sub '${Environment}-NotesApiId'
+
+  Region:
+    Description: AWS Region
+    Value: !Ref AWS::Region
+
+  NoteCrudLambdaRoleArn:
+    Description: NOTE CRUD Lambda IAM Role ARN
+    Value: !GetAtt NoteCrudLambdaRole.Arn
+
+  SummarizeLambdaRoleArn:
+    Description: Summarize Lambda IAM Role ARN
+    Value: !GetAtt SummarizeLambdaRole.Arn

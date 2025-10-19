@@ -1,0 +1,165 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'GitHub Actions OIDC Provider and IAM Role Setup'
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Description: Your GitHub username or organization name
+    Default: WageehMan
+  
+  RepositoryName:
+    Type: String
+    Description: Your GitHub repository name
+    Default: note-service
+
+  RoleName:
+    Type: String
+    Description: Name of the IAM role for GitHub Actions
+    Default: GitHubActionsDeployRole
+
+Resources:
+  # ========================================
+  # GitHub OIDC Identity Provider
+  # ========================================
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+      Tags:
+        - Key: Name
+          Value: GitHubActionsOIDC
+
+  # ========================================
+  # IAM Role for GitHub Actions
+  # ========================================
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: Role for GitHub Actions to deploy Notes Service
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !GetAtt GitHubOIDCProvider.Arn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${RepositoryName}:*'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/PowerUserAccess  # Broad permissions for deployment
+      Policies:
+        - PolicyName: GitHubActionsDeploymentPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # CloudFormation Permissions
+              - Effect: Allow
+                Action:
+                  - cloudformation:*
+                Resource: '*'
+              
+              # IAM Permissions (for CloudFormation to create roles)
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:CreatePolicy
+                  - iam:DeletePolicy
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
+                  - iam:ListPolicyVersions
+                  - iam:TagRole
+                  - iam:UntagRole
+                Resource: '*'
+              
+              # Lambda Permissions
+              - Effect: Allow
+                Action:
+                  - lambda:*
+                Resource: '*'
+              
+              # API Gateway Permissions
+              - Effect: Allow
+                Action:
+                  - apigateway:*
+                Resource: '*'
+              
+              # S3 Permissions (for Lambda packages)
+              - Effect: Allow
+                Action:
+                  - s3:*
+                Resource: '*'
+              
+              # SNS/SQS Permissions
+              - Effect: Allow
+                Action:
+                  - sns:*
+                  - sqs:*
+                Resource: '*'
+              
+              # CloudWatch Permissions
+              - Effect: Allow
+                Action:
+                  - logs:*
+                  - cloudwatch:*
+                Resource: '*'
+              
+              # RDS Permissions (if using RDS)
+              - Effect: Allow
+                Action:
+                  - rds:Describe*
+                  - rds:List*
+                Resource: '*'
+              
+              # Bedrock Permissions (for testing)
+              - Effect: Allow
+                Action:
+                  - bedrock:*
+                Resource: '*'
+      Tags:
+        - Key: Purpose
+          Value: GitHubActions
+        - Key: Project
+          Value: NotesService
+
+Outputs:
+  OIDCProviderArn:
+    Description: ARN of the GitHub OIDC Provider
+    Value: !GetAtt GitHubOIDCProvider.Arn
+    Export:
+      Name: GitHubOIDCProviderArn
+  
+  GitHubActionsRoleArn:
+    Description: ARN of the GitHub Actions IAM Role
+    Value: !GetAtt GitHubActionsRole.Arn
+    Export:
+      Name: GitHubActionsRoleArn
+  
+  GitHubActionsRoleName:
+    Description: Name of the GitHub Actions IAM Role
+    Value: !Ref GitHubActionsRole
+  
+  InstructionsForGitHub:
+    Description: Use this Role ARN in your GitHub Actions workflow
+    Value: !Sub |
+      Add this to your GitHub Actions workflow:
+      role-to-assume: ${GitHubActionsRole.Arn}
+      
+      Or use the role name:
+      role-to-assume: arn:aws:iam::${AWS::AccountId}:role/${RoleName}

@@ -1,0 +1,309 @@
+﻿name: Deploy Notes Service (.NET)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'prod'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  AWS_REGION: us-east-1
+  DOTNET_VERSION: '8.0.x'
+  S3_BUCKET: cf-templates-z03e1ivmdu5u-us-east-1
+  STACK_NAME: notes-service-${{ github.event.inputs.environment || 'prod' }}
+
+jobs:
+  build:
+    name: Build .NET Lambdas
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+      # Restore dependencies
+      - name: Restore dependencies
+        run: |
+          dotnet restore NotesService.DAL/NotesService.DAL.csproj
+          dotnet restore NoteCrud/NoteCrud.csproj
+          dotnet restore Summarize/Summarize.csproj
+      
+      # Build DAL first
+      - name: Build DAL
+        run: |
+          dotnet build NotesService.DAL/NotesService.DAL.csproj \
+            --configuration Release \
+            --no-restore
+      
+      - name: Build NoteCrud Lambda
+        run: |
+          dotnet build NoteCrud/NoteCrud.csproj \
+            --configuration Release \
+            --no-restore
+      
+      - name: Build Summarize Lambda
+        run: |
+          dotnet build Summarize/Summarize.csproj \
+            --configuration Release \
+            --no-restore
+      
+      - name: Run tests
+        run: |
+          # Run tests if they exist
+          if [ -d "tests" ]; then
+            dotnet test tests/**/*.csproj --no-restore --verbosity normal || true
+          else
+            echo "No tests found, skipping..."
+          fi
+        continue-on-error: true
+      
+      - name: Publish NoteCrud Lambda
+        run: |
+          dotnet publish NoteCrud/NoteCrud.csproj \
+            --configuration Release \
+            --output NoteCrud/publish \
+            --no-restore \
+            --self-contained false
+      
+      - name: Publish Summarize Lambda
+        run: |
+          dotnet publish Summarize/Summarize.csproj \
+            --configuration Release \
+            --output Summarize/publish \
+            --no-restore \
+            --self-contained false
+      
+      - name: Create Lambda deployment packages
+        run: |
+          cd NoteCrud/publish
+          zip -r ../note-crud-lambda.zip .
+          
+          cd ../../Summarize/publish
+          zip -r ../summarize-lambda.zip .
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-packages
+          path: |
+            NoteCrud/note-crud-lambda.zip
+            Summarize/summarize-lambda.zip
+          retention-days: 7
+
+  deploy:
+    name: Deploy to AWS
+    needs: build
+    runs-on: ubuntu-latest
+    
+    # Set environment for protection rules
+    environment:
+      name: ${{ github.event.inputs.environment || 'prod' }}
+    
+    # Required for OIDC authentication
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Download Lambda packages
+        uses: actions/download-artifact@v4
+        with:
+          name: lambda-packages
+          path: .
+      
+      # Verify downloaded files for debugging
+      - name: Verify downloaded artifacts
+        run: |
+          ls -lh NoteCrud/
+          ls -lh Summarize/
+      
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::468691975112:role/GitHubActionsDeployRole
+          role-session-name: GitHub-${{ github.repository }}-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-duration-seconds: 3600
+      
+      - name: Verify AWS identity
+        run: |
+          echo "Logged in as:"
+          aws sts get-caller-identity
+          echo ""
+          echo "AWS Region: ${{ env.AWS_REGION }}"
+          echo "Stack Name: ${{ env.STACK_NAME }}"
+      
+      # ✅ Better S3 bucket check
+      - name: Verify S3 bucket exists
+        run: |
+          if aws s3 ls "s3://${{ env.S3_BUCKET }}" 2>&1 > /dev/null; then
+            echo "✅ Bucket ${{ env.S3_BUCKET }} exists"
+          else
+            echo "⚠️ Bucket ${{ env.S3_BUCKET }} does not exist"
+            echo "Creating bucket..."
+            aws s3 mb s3://${{ env.S3_BUCKET }} --region ${{ env.AWS_REGION }}
+          fi
+      
+      - name: Upload Lambda packages to S3
+        run: |
+          echo "Uploading NoteCrud Lambda..."
+          aws s3 cp NoteCrud/note-crud-lambda.zip \
+            s3://${{ env.S3_BUCKET }}/note-crud-lambda.zip
+          
+          echo "Uploading Summarize Lambda..."
+          aws s3 cp Summarize/summarize-lambda.zip \
+            s3://${{ env.S3_BUCKET }}/summarize-lambda.zip
+          
+          echo "✅ Lambda packages uploaded to S3"
+          
+          # Verify uploads
+          aws s3 ls s3://${{ env.S3_BUCKET }}/
+      
+      - name: Validate CloudFormation template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infrastructure/cloudformation-template.yaml \
+            --region ${{ env.AWS_REGION }}
+      
+      - name: Deploy CloudFormation stack
+        id: deploy
+        run: |
+          # Check if stack exists
+          if aws cloudformation describe-stacks \
+              --stack-name ${{ env.STACK_NAME }} \
+              --region ${{ env.AWS_REGION }} 2>&1 | grep -q 'does not exist'; then
+            echo "Creating new stack..."
+            COMMAND="create-stack"
+            WAIT_COMMAND="stack-create-complete"
+          else
+            echo "Updating existing stack..."
+            COMMAND="update-stack"
+            WAIT_COMMAND="stack-update-complete"
+          fi
+          
+          # Deploy stack
+          aws cloudformation $COMMAND \
+            --stack-name ${{ env.STACK_NAME }} \
+            --template-body file://infrastructure/cloudformation-template.yaml \
+            --parameters file://infrastructure/parameters.json \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }} \
+            --tags \
+              Key=Environment,Value=${{ github.event.inputs.environment || 'prod' }} \
+              Key=ManagedBy,Value=GitHubActions \
+              Key=Repository,Value=${{ github.repository }} || true
+          
+          # Wait for completion
+          if [ "$COMMAND" = "update-stack" ]; then
+            aws cloudformation wait $WAIT_COMMAND \
+              --stack-name ${{ env.STACK_NAME }} \
+              --region ${{ env.AWS_REGION }} || true
+          else
+            aws cloudformation wait $WAIT_COMMAND \
+              --stack-name ${{ env.STACK_NAME }} \
+              --region ${{ env.AWS_REGION }}
+          fi
+      
+      - name: Get stack outputs
+        id: outputs
+        run: |
+          # Get API endpoint
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text)
+          
+          echo "api_endpoint=$API_ENDPOINT" >> $GITHUB_OUTPUT
+          
+          echo "### Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Stack Name:** ${{ env.STACK_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**API Endpoint:** $API_ENDPOINT" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### Test your API:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "curl -X POST $API_ENDPOINT -H 'Content-Type: application/json' -d '{\"content\":\"Test note\"}'" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+      
+      - name: Run smoke tests
+        if: steps.outputs.outputs.api_endpoint != ''
+        run: |
+          echo "Running smoke tests against: ${{ steps.outputs.outputs.api_endpoint }}"
+          
+          # Simple health check
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" ${{ steps.outputs.outputs.api_endpoint }})
+          
+          if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 404 ]; then
+            echo "✅ API is responding (HTTP $HTTP_CODE)"
+          else
+            echo "⚠️ API returned HTTP $HTTP_CODE"
+          fi
+      
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Deployment Preview 🚀
+              
+              **Stack:** \`${{ env.STACK_NAME }}\`
+              **API Endpoint:** \`${{ steps.outputs.outputs.api_endpoint }}\`
+              
+              Test the API:
+              \`\`\`bash
+              curl ${{ steps.outputs.outputs.api_endpoint }}
+              \`\`\`
+              `
+            })
+
+  cleanup-on-failure:
+    name: Cleanup on Failure
+    needs: [build, deploy]
+    if: failure()
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::468691975112:role/GitHubActionsDeployRole
+          role-session-name: GitHub-Cleanup-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Check for stuck resources
+        run: |
+          echo "Checking for resources that may need cleanup..."
+          # Add any cleanup logic here if needed

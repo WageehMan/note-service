@@ -1,0 +1,42 @@
+[
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "prod"
+  },
+  {
+    "ParameterKey": "PostgreSQLHost",
+    "ParameterValue": "localhost"
+  },
+  {
+    "ParameterKey": "PostgreSQLPort",
+    "ParameterValue": "5432"
+  },
+  {
+    "ParameterKey": "PostgreSQLDatabase",
+    "ParameterValue": "notesdb"
+  },
+  {
+    "ParameterKey": "PostgreSQLUsername",
+    "ParameterValue": "notesuser"
+  },
+  {
+    "ParameterKey": "PostgreSQLPassword",
+    "ParameterValue": "Password123!"
+  },
+  {
+    "ParameterKey": "BedrockModelId",
+    "ParameterValue": "anthropic.claude-3-haiku-20240307-v1:0"
+  },
+  {
+    "ParameterKey": "LambdaS3Bucket",
+    "ParameterValue": "cf-templates-z03e1ivmdu5u-us-east-1"
+  },
+  {
+    "ParameterKey": "NoteCrudLambdaKey",
+    "ParameterValue": "note-crud-lambda.zip"
+  },
+  {
+    "ParameterKey": "SummarizeLambdaKey",
+    "ParameterValue": "summarize-lambda.zip"
+  }
+]

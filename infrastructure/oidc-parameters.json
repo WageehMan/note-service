@@ -1,0 +1,14 @@
+[
+  {
+    "ParameterKey": "GitHubOrg",
+    "ParameterValue": "WageehMan"
+  },
+  {
+    "ParameterKey": "RepositoryName",
+    "ParameterValue": "note-service"
+  },
+  {
+    "ParameterKey": "RoleName",
+    "ParameterValue": "GitHubActionsDeployRole"
+  }
+]

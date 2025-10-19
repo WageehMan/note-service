@@ -1,0 +1,49 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.8.34601.278
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{5E2B7216-0595-44AF-A361-CAF498C982C9}"
+	ProjectSection(SolutionItems) = preProject
+		.github\workflows\deploy-dotnet.yml = .github\workflows\deploy-dotnet.yml
+		README.md = README.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "infrastructure", "infrastructure", "{5DFA37D1-7D18-4945-B524-E9B3D76B44E8}"
+	ProjectSection(SolutionItems) = preProject
+		infrastructure\oidc-github-setup.yaml = infrastructure\oidc-github-setup.yaml
+		infrastructure\oidc-parameters.json = infrastructure\oidc-parameters.json
+	EndProjectSection
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NoteCrud", "NoteCrud\NoteCrud.csproj", "{FFD4862B-DF3E-418A-BF5E-1B2C562BF2B0}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Summarize", "Summarize\Summarize.csproj", "{F551F160-17D6-4CD7-AA4E-0DA44ADC9B97}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NoteService.DAL", "NoteService.DAL\NoteService.DAL.csproj", "{730ED7B8-80D0-4A51-9D0F-6CF606C03C09}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{FFD4862B-DF3E-418A-BF5E-1B2C562BF2B0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FFD4862B-DF3E-418A-BF5E-1B2C562BF2B0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FFD4862B-DF3E-418A-BF5E-1B2C562BF2B0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FFD4862B-DF3E-418A-BF5E-1B2C562BF2B0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F551F160-17D6-4CD7-AA4E-0DA44ADC9B97}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F551F160-17D6-4CD7-AA4E-0DA44ADC9B97}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F551F160-17D6-4CD7-AA4E-0DA44ADC9B97}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F551F160-17D6-4CD7-AA4E-0DA44ADC9B97}.Release|Any CPU.Build.0 = Release|Any CPU
+		{730ED7B8-80D0-4A51-9D0F-6CF606C03C09}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{730ED7B8-80D0-4A51-9D0F-6CF606C03C09}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{730ED7B8-80D0-4A51-9D0F-6CF606C03C09}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{730ED7B8-80D0-4A51-9D0F-6CF606C03C09}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {20D8D91D-B0B6-4E4E-A242-603B5758BF8F}
+	EndGlobalSection
+EndGlobal
