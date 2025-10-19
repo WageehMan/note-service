@@ -5,14 +5,16 @@ VisualStudioVersion = 17.8.34601.278
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{5E2B7216-0595-44AF-A361-CAF498C982C9}"
 	ProjectSection(SolutionItems) = preProject
-		.github\workflows\deploy-dotnet.yml = .github\workflows\deploy-dotnet.yml
 		README.md = README.md
+		.github\workflows\deploy.yml = .github\workflows\deploy.yml
 	EndProjectSection
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "infrastructure", "infrastructure", "{5DFA37D1-7D18-4945-B524-E9B3D76B44E8}"
 	ProjectSection(SolutionItems) = preProject
+		infrastructure\cloudformation-template.yaml = infrastructure\cloudformation-template.yaml
 		infrastructure\oidc-github-setup.yaml = infrastructure\oidc-github-setup.yaml
 		infrastructure\oidc-parameters.json = infrastructure\oidc-parameters.json
+		infrastructure\parameters.json = infrastructure\parameters.json
 	EndProjectSection
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NoteCrud", "NoteCrud\NoteCrud.csproj", "{FFD4862B-DF3E-418A-BF5E-1B2C562BF2B0}"

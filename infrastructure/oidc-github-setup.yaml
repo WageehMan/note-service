@@ -136,7 +136,7 @@ Resources:
         - Key: Purpose
           Value: GitHubActions
         - Key: Project
-          Value: NotesService
+          Value: NoteService
 
 Outputs:
   OIDCProviderArn:

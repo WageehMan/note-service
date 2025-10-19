@@ -75,7 +75,7 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: NotesService
+          Value: NoteService
 
   # ========================================
   # SQS Dead Letter Queue
@@ -89,7 +89,7 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: NotesService
+          Value: NoteService
 
   # ========================================
   # SQS Queue for Summarization
@@ -108,7 +108,7 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: NotesService
+          Value: NoteService
 
   # ========================================
   # SQS Queue Policy
@@ -178,7 +178,7 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: NotesService
+          Value: NoteService
 
   # ========================================
   # IAM Role for Summarize Lambda
@@ -228,7 +228,7 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: NotesService
+          Value: NoteService
 
   # ========================================
   # NOTE CRUD Lambda Function
@@ -259,7 +259,7 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: NotesService
+          Value: NoteService
 
   # ========================================
   # Summarize Lambda Function
@@ -291,7 +291,7 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
         - Key: Application
-          Value: NotesService
+          Value: NoteService
 
   # ========================================
   # SQS Event Source Mapping for Summarize Lambda
