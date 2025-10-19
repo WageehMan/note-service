@@ -217,12 +217,14 @@ jobs:
               WAIT_COMMAND="stack-create-complete"
             else
               echo "Info: We can use update stack!"
-              COMMAND="UPDATE"  
+              COMMAND="update-stack"  
               WAIT_COMMAND="stack-update-complete"
               echo $COMMAND
             fi
           else
             echo "Stack ${{ env.STACK_NAME }} does not exist"
+            COMMAND="create-stack"
+            WAIT_COMMAND="stack-create-complete"
           fi
           
           # Deploy stack
