@@ -1,0 +1,9 @@
+*.vsidx
+*.v2
+/.vs
+/NoteCrud/bin
+/NoteCrud/obj
+/NoteService.DAL/bin
+/NoteService.DAL/obj
+/Summarize/bin
+/Summarize/obj
