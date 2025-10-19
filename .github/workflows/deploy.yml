@@ -224,7 +224,16 @@ jobs:
             if [[ $STATUS != "CREATE_COMPLETE" && $STATUS != "UPDATE_COMPLETE" ]]; then
               echo "Deleting failed stack..."
               aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }}
-              aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} || true
+              timeout 300 aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} || true
+              WAIT_RESULT=$?
+        
+              if [ $WAIT_RESULT -eq 0 ]; then
+                echo "Failed stack deleted successfully."
+              else
+                echo "Warning: Stack deletion wait timed out or failed. Continuing anyway..."
+                # Add a sleep to give more time for deletion to progress
+                sleep 30
+              fi
               COMMAND="create-stack"
               WAIT_COMMAND="stack-create-complete"
             else
