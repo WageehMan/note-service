@@ -44,14 +44,14 @@ jobs:
       # Restore dependencies
       - name: Restore dependencies
         run: |
-          dotnet restore NotesService.DAL/NotesService.DAL.csproj
+          dotnet restore NoteService.DAL/NoteService.DAL.csproj
           dotnet restore NoteCrud/NoteCrud.csproj
           dotnet restore Summarize/Summarize.csproj
       
       # Build DAL first
       - name: Build DAL
         run: |
-          dotnet build NotesService.DAL/NotesService.DAL.csproj \
+          dotnet build NoteService.DAL/NoteService.DAL.csproj \
             --configuration Release \
             --no-restore
       
