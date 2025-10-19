@@ -1,4 +1,4 @@
-﻿name: Deploy Notes Service (.NET)
+﻿name: Deploy Notes Service (Full Stack)
 
 on:
   push:
@@ -24,11 +24,15 @@ on:
 env:
   AWS_REGION: us-east-1
   DOTNET_VERSION: '8.0.x'
+  NODE_VERSION: '20.x'
   S3_BUCKET: cf-templates-z03e1ivmdu5u-us-east-1
   STACK_NAME: notes-service-${{ github.event.inputs.environment || 'prod' }}
 
 jobs:
-  build:
+  # ==========================================
+  # BUILD BACKEND (.NET LAMBDAS)
+  # ==========================================
+  build-backend:
     name: Build .NET Lambdas
     runs-on: ubuntu-latest
     
@@ -41,14 +45,12 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       
-      # Restore dependencies
       - name: Restore dependencies
         run: |
           dotnet restore NoteService.DAL/NoteService.DAL.csproj
           dotnet restore NoteCrud/NoteCrud.csproj
           dotnet restore Summarize/Summarize.csproj
       
-      # Build DAL first
       - name: Build DAL
         run: |
           dotnet build NoteService.DAL/NoteService.DAL.csproj \
@@ -66,16 +68,6 @@ jobs:
           dotnet build Summarize/Summarize.csproj \
             --configuration Release \
             --no-restore
-      
-      - name: Run tests
-        run: |
-          # Run tests if they exist
-          if [ -d "tests" ]; then
-            dotnet test tests/**/*.csproj --no-restore --verbosity normal || true
-          else
-            echo "No tests found, skipping..."
-          fi
-        continue-on-error: true
       
       - name: Publish NoteCrud Lambda
         run: |
@@ -101,7 +93,7 @@ jobs:
           cd ../../Summarize/publish
           zip -r ../summarize-lambda.zip .
       
-      - name: Upload artifacts
+      - name: Upload Lambda artifacts
         uses: actions/upload-artifact@v4
         with:
           name: lambda-packages
@@ -110,19 +102,69 @@ jobs:
             Summarize/summarize-lambda.zip
           retention-days: 7
 
-  deploy:
-    name: Deploy to AWS
-    needs: build
+  # ==========================================
+  # BUILD FRONTEND (ANGULAR)
+  # ==========================================
+  build-frontend:
+    name: Build Angular Frontend
     runs-on: ubuntu-latest
     
-    # Set environment for protection rules
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: NotesService.Web/package-lock.json
+      
+      - name: Install dependencies
+        run: |
+          cd NotesService.Web
+          npm ci
+      
+      - name: Build Angular app
+        run: |
+          cd NotesService.Web
+          npm run build -- --configuration production
+        env:
+          NODE_OPTIONS: --max_old_space_size=4096
+      
+      - name: List build output (debug)
+        run: |
+          echo "Build output structure:"
+          ls -la NotesService.Web/dist/
+          if [ -d "NotesService.Web/dist/notes-service-web" ]; then
+            ls -la NotesService.Web/dist/notes-service-web/
+          fi
+      
+      - name: Upload frontend artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: NotesService.Web/dist/
+          retention-days: 7
+
+  # ==========================================
+  # DEPLOY INFRASTRUCTURE & BACKEND
+  # ==========================================
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    needs: [build-backend]
+    runs-on: ubuntu-latest
+    
     environment:
       name: ${{ github.event.inputs.environment || 'prod' }}
     
-    # Required for OIDC authentication
     permissions:
       id-token: write
       contents: read
+    
+    outputs:
+      api_endpoint: ${{ steps.outputs.outputs.api_endpoint }}
+      db_endpoint: ${{ steps.outputs.outputs.db_endpoint }}
     
     steps:
       - name: Checkout code
@@ -134,17 +176,16 @@ jobs:
           name: lambda-packages
           path: .
       
-      # Verify downloaded files for debugging
-      - name: Verify downloaded artifacts
+      - name: Verify artifacts
         run: |
           ls -lh NoteCrud/
           ls -lh Summarize/
       
-      - name: Configure AWS credentials using OIDC
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::468691975112:role/GitHubActionsDeployRole
-          role-session-name: GitHub-${{ github.event.repository.name }}-${{ github.run_id }}
+          role-session-name: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 3600
       
@@ -152,35 +193,21 @@ jobs:
         run: |
           echo "Logged in as:"
           aws sts get-caller-identity
-          echo ""
-          echo "AWS Region: ${{ env.AWS_REGION }}"
-          echo "Stack Name: ${{ env.STACK_NAME }}"
       
-      # ✅ Better S3 bucket check
       - name: Verify S3 bucket exists
         run: |
           if aws s3 ls "s3://${{ env.S3_BUCKET }}" 2>&1 > /dev/null; then
-            echo "✅ Bucket ${{ env.S3_BUCKET }} exists"
+            echo "✅ Bucket exists"
           else
-            echo "⚠️ Bucket ${{ env.S3_BUCKET }} does not exist"
             echo "Creating bucket..."
             aws s3 mb s3://${{ env.S3_BUCKET }} --region ${{ env.AWS_REGION }}
           fi
       
-      - name: Upload Lambda packages to S3
+      - name: Upload Lambda packages
         run: |
-          echo "Uploading NoteCrud Lambda..."
-          aws s3 cp NoteCrud/note-crud-lambda.zip \
-            s3://${{ env.S3_BUCKET }}/note-crud-lambda.zip
-          
-          echo "Uploading Summarize Lambda..."
-          aws s3 cp Summarize/summarize-lambda.zip \
-            s3://${{ env.S3_BUCKET }}/summarize-lambda.zip
-          
-          echo "✅ Lambda packages uploaded to S3"
-          
-          # Verify uploads
-          aws s3 ls s3://${{ env.S3_BUCKET }}/
+          aws s3 cp NoteCrud/note-crud-lambda.zip s3://${{ env.S3_BUCKET }}/note-crud-lambda.zip
+          aws s3 cp Summarize/summarize-lambda.zip s3://${{ env.S3_BUCKET }}/summarize-lambda.zip
+          echo "✅ Packages uploaded"
       
       - name: Validate CloudFormation template
         run: |
@@ -189,45 +216,28 @@ jobs:
             --region ${{ env.AWS_REGION }}
       
       - name: Deploy CloudFormation stack
-        id: deploy
         run: |
-          # Check if stack exists
           if aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
             STATUS=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} --query "Stacks[0].StackStatus" --output text)
-            echo "Stack ${{ env.STACK_NAME }} exists with status: $STATUS"
-            # Check if stack in correct state
-            if [[ $STATUS != "CREATE_COMPLETE" && $STATUS != "UPDATE_COMPLETE" ]]; then
-              echo "Warning: Stack is in a FAILED state!"
-              echo "Deleting failed stack before creating a new one..."
+            echo "Stack exists: $STATUS"
+            
+            if [[ $STATUS == *"FAILED"* ]] || [[ $STATUS == "ROLLBACK_COMPLETE" ]]; then
+              echo "Deleting failed stack..."
               aws cloudformation delete-stack --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }}
-              echo "Waiting for stack deletion to complete..."
-              # Set a timeout for the wait command (300 seconds = 5 minutes)
-              timeout 300 aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }}
-
-              WAIT_RESULT=$?
-        
-              if [ $WAIT_RESULT -eq 0 ]; then
-                echo "Failed stack deleted successfully."
-              else
-                echo "Warning: Stack deletion wait timed out or failed. Continuing anyway..."
-                # Add a sleep to give more time for deletion to progress
-                sleep 30
-              fi
+              aws cloudformation wait stack-delete-complete --stack-name ${{ env.STACK_NAME }} --region ${{ env.AWS_REGION }} || true
               COMMAND="create-stack"
               WAIT_COMMAND="stack-create-complete"
             else
-              echo "Info: We can use update stack!"
-              COMMAND="update-stack"  
+              COMMAND="update-stack"
               WAIT_COMMAND="stack-update-complete"
-              echo $COMMAND
             fi
           else
-            echo "Stack ${{ env.STACK_NAME }} does not exist"
+            echo "Stack does not exist, creating..."
             COMMAND="create-stack"
             WAIT_COMMAND="stack-create-complete"
           fi
           
-          # Deploy stack
+          echo "Running: $COMMAND"
           aws cloudformation $COMMAND \
             --stack-name ${{ env.STACK_NAME }} \
             --template-body file://infrastructure/cloudformation-template.yaml \
@@ -237,80 +247,161 @@ jobs:
             --tags \
               Key=Environment,Value=${{ github.event.inputs.environment || 'prod' }} \
               Key=ManagedBy,Value=GitHubActions \
-              Key=Repository,Value=${{ github.repository }} || true
+              Key=Repository,Value=${{ github.repository }}
           
-          # Wait for completion
-          if [ "$COMMAND" = "update-stack" ]; then
-            aws cloudformation wait $WAIT_COMMAND \
-              --stack-name ${{ env.STACK_NAME }} \
-              --region ${{ env.AWS_REGION }} || true
-          else
-            aws cloudformation wait $WAIT_COMMAND \
-              --stack-name ${{ env.STACK_NAME }} \
-              --region ${{ env.AWS_REGION }}
-          fi
+          echo "Waiting for stack..."
+          aws cloudformation wait $WAIT_COMMAND \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Stack deployed"
       
       - name: Get stack outputs
         id: outputs
         run: |
-          # Get API endpoint
           API_ENDPOINT=$(aws cloudformation describe-stacks \
             --stack-name ${{ env.STACK_NAME }} \
             --region ${{ env.AWS_REGION }} \
             --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
             --output text)
           
+          DB_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`DBEndpoint`].OutputValue' \
+            --output text)
+          
           echo "api_endpoint=$API_ENDPOINT" >> $GITHUB_OUTPUT
+          echo "db_endpoint=$DB_ENDPOINT" >> $GITHUB_OUTPUT
           
-          echo "### Deployment Successful! 🚀" >> $GITHUB_STEP_SUMMARY
+          echo "### Infrastructure Deployed! 🚀" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Stack Name:** ${{ env.STACK_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "**API Endpoint:** $API_ENDPOINT" >> $GITHUB_STEP_SUMMARY
-          echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Test your API:" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "curl -X POST $API_ENDPOINT -H 'Content-Type: application/json' -d '{\"content\":\"Test note\"}'" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "**DB Endpoint:** $DB_ENDPOINT" >> $GITHUB_STEP_SUMMARY
+
+  # ==========================================
+  # DEPLOY FRONTEND TO S3
+  # ==========================================
+  deploy-frontend:
+    name: Deploy Frontend to S3
+    needs: [build-frontend, deploy-infrastructure]
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    steps:
+      - name: Download frontend artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: dist
       
-      - name: Run smoke tests
-        if: steps.outputs.outputs.api_endpoint != ''
+      - name: Find Angular build output
+        id: find-dist
         run: |
-          echo "Running smoke tests against: ${{ steps.outputs.outputs.api_endpoint }}"
+          echo "Checking dist structure..."
+          ls -la dist/
           
-          # Simple health check
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" ${{ steps.outputs.outputs.api_endpoint }})
-          
-          if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 404 ]; then
-            echo "✅ API is responding (HTTP $HTTP_CODE)"
+          # Find the actual browser output directory
+          if [ -d "dist/notes-service-web/browser" ]; then
+            DIST_PATH="dist/notes-service-web/browser"
+          elif [ -d "dist/browser" ]; then
+            DIST_PATH="dist/browser"
+          elif [ -d "dist/notes-service-web" ]; then
+            DIST_PATH="dist/notes-service-web"
           else
-            echo "⚠️ API returned HTTP $HTTP_CODE"
+            DIST_PATH="dist"
+          fi
+          
+          echo "Using dist path: $DIST_PATH"
+          echo "dist_path=$DIST_PATH" >> $GITHUB_OUTPUT
+          
+          ls -la $DIST_PATH/
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::468691975112:role/GitHubActionsDeployRole
+          role-session-name: ${{ github.repository_owner }}-${{ github.event.repository.name }}-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Create and configure S3 bucket
+        run: |
+          BUCKET_NAME="notes-frontend-${{ github.event.inputs.environment || 'prod' }}"
+          
+          if aws s3 ls "s3://$BUCKET_NAME" 2>&1 > /dev/null; then
+            echo "✅ Bucket exists"
+          else
+            echo "Creating bucket..."
+            aws s3 mb s3://$BUCKET_NAME --region ${{ env.AWS_REGION }}
+            
+            # Enable static website
+            aws s3 website s3://$BUCKET_NAME/ \
+              --index-document index.html \
+              --error-document index.html
+            
+            # Disable block public access
+            aws s3api put-public-access-block \
+              --bucket $BUCKET_NAME \
+              --public-access-block-configuration \
+              "BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false"
+            
+            # Set bucket policy
+            cat > policy.json <<EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Sid": "PublicReadGetObject",
+              "Effect": "Allow",
+              "Principal": "*",
+              "Action": "s3:GetObject",
+              "Resource": "arn:aws:s3:::$BUCKET_NAME/*"
+            }]
+          }
+          EOF
+            
+            aws s3api put-bucket-policy --bucket $BUCKET_NAME --policy file://policy.json
+            echo "✅ Bucket configured"
           fi
       
-      - name: Comment on PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `## Deployment Preview 🚀
-              
-              **Stack:** \`${{ env.STACK_NAME }}\`
-              **API Endpoint:** \`${{ steps.outputs.outputs.api_endpoint }}\`
-              
-              Test the API:
-              \`\`\`bash
-              curl ${{ steps.outputs.outputs.api_endpoint }}
-              \`\`\`
-              `
-            })
+      - name: Deploy to S3
+        run: |
+          BUCKET_NAME="notes-frontend-${{ github.event.inputs.environment || 'prod' }}"
+          DIST_PATH="${{ steps.find-dist.outputs.dist_path }}"
+          
+          # Upload all files with cache headers
+          aws s3 sync $DIST_PATH/ s3://$BUCKET_NAME/ \
+            --delete \
+            --cache-control "public, max-age=31536000" \
+            --exclude "*.html"
+          
+          # Upload HTML with no-cache
+          aws s3 sync $DIST_PATH/ s3://$BUCKET_NAME/ \
+            --exclude "*" \
+            --include "*.html" \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --content-type "text/html"
+          
+          FRONTEND_URL="http://$BUCKET_NAME.s3-website-${{ env.AWS_REGION }}.amazonaws.com"
+          
+          echo "✅ Frontend deployed"
+          echo "Frontend URL: $FRONTEND_URL"
+          
+          echo "### Frontend Deployed! 🎉" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Frontend URL:** [$FRONTEND_URL]($FRONTEND_URL)" >> $GITHUB_STEP_SUMMARY
+          echo "**API Endpoint:** ${{ needs.deploy-infrastructure.outputs.api_endpoint }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🎯 Open the Frontend URL to access your application!" >> $GITHUB_STEP_SUMMARY
 
+  # ==========================================
+  # CLEANUP ON FAILURE
+  # ==========================================
   cleanup-on-failure:
     name: Cleanup on Failure
-    needs: [build, deploy]
+    needs: [build-backend, build-frontend, deploy-infrastructure, deploy-frontend]
     if: failure()
     runs-on: ubuntu-latest
     
@@ -320,7 +411,7 @@ jobs:
     
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::468691975112:role/GitHubActionsDeployRole
           role-session-name: GitHub-Cleanup-${{ github.run_id }}
@@ -328,5 +419,4 @@ jobs:
       
       - name: Check for stuck resources
         run: |
-          echo "Checking for resources that may need cleanup..."
-          # Add any cleanup logic here if needed
+          echo "Deployment failed. Check logs for details."

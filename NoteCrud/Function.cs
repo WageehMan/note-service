@@ -1,10 +1,11 @@
-using Amazon.Lambda.Core;
+﻿using Amazon.Lambda.Core;
 using Amazon.Lambda.APIGatewayEvents;
 using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
 using System.Text.Json;
 using NoteService.DAL.Models;
 using NoteService.DAL;
+using Npgsql;
 
 [assembly: LambdaSerializer(typeof(Amazon.Lambda.Serialization.SystemTextJson.DefaultLambdaJsonSerializer))]
 
@@ -15,18 +16,24 @@ public class Function
     private readonly INotesDAL _dal;
     private readonly IAmazonSimpleNotificationService _snsClient;
     private readonly string _topicArn;
+    private readonly string _connectionString;
+    private static bool _databaseInitialized = false;
+    private static readonly SemaphoreSlim _initSemaphore = new SemaphoreSlim(1, 1);
 
     /// <summary>
     /// Default constructor - used by Lambda runtime
     /// </summary>
     public Function()
     {
-        var connectionString = Environment.GetEnvironmentVariable("CONNECTION_STRING")
+        _connectionString = Environment.GetEnvironmentVariable("CONNECTION_STRING")
             ?? throw new InvalidOperationException("CONNECTION_STRING environment variable is required");
 
-        _dal = new NotesDAL(connectionString);
+        _dal = new NotesDAL(_connectionString);
         _snsClient = new AmazonSimpleNotificationServiceClient();
         _topicArn = Environment.GetEnvironmentVariable("SNS_TOPIC_ARN") ?? "";
+
+        // Initialize database schema on first cold start
+        EnsureDatabaseAsync().GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -37,6 +44,79 @@ public class Function
         _dal = dal ?? throw new ArgumentNullException(nameof(dal));
         _snsClient = snsClient ?? throw new ArgumentNullException(nameof(snsClient));
         _topicArn = topicArn ?? "";
+        _connectionString = "";
+    }
+
+    /// <summary>
+    /// Ensure database schema exists - runs once per Lambda instance
+    /// </summary>
+    private async Task EnsureDatabaseAsync()
+    {
+        // Only initialize once per Lambda instance (cold start)
+        if (_databaseInitialized)
+            return;
+
+        await _initSemaphore.WaitAsync();
+        try
+        {
+            // Double-check after acquiring semaphore
+            if (_databaseInitialized)
+                return;
+
+            Console.WriteLine("Initializing database schema...");
+
+            using var conn = new NpgsqlConnection(_connectionString);
+            await conn.OpenAsync();
+
+            var createSchemaSql = @"
+                -- Create notes table if not exists
+                CREATE TABLE IF NOT EXISTS notes (
+                    id UUID PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    summary TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+
+                -- Create indexes
+                CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_notes_content ON notes USING gin(to_tsvector('english', content));
+
+                -- Create trigger function for updated_at
+                CREATE OR REPLACE FUNCTION update_updated_at_column()
+                RETURNS TRIGGER AS $
+                BEGIN
+                    NEW.updated_at = CURRENT_TIMESTAMP;
+                    RETURN NEW;
+                END;
+                $ language 'plpgsql';
+
+                -- Create trigger
+                DROP TRIGGER IF EXISTS update_notes_updated_at ON notes;
+                CREATE TRIGGER update_notes_updated_at
+                    BEFORE UPDATE ON notes
+                    FOR EACH ROW
+                    EXECUTE FUNCTION update_updated_at_column();
+            ";
+
+            using var cmd = new NpgsqlCommand(createSchemaSql, conn);
+            await cmd.ExecuteNonQueryAsync();
+
+            _databaseInitialized = true;
+            Console.WriteLine("✅ Database schema initialized successfully");
+        }
+        catch (Exception ex)
+        {
+            // Log error but don't crash - database might already exist
+            Console.WriteLine($"⚠️ Database initialization warning: {ex.Message}");
+            // Mark as initialized anyway to avoid retrying on every request
+            _databaseInitialized = true;
+        }
+        finally
+        {
+            _initSemaphore.Release();
+        }
     }
 
     /// <summary>

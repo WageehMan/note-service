@@ -7,3 +7,5 @@
 /NoteService.DAL/obj
 /Summarize/bin
 /Summarize/obj
+/NotesService.Web/.vscode
+/NotesService.Web/package-lock.json

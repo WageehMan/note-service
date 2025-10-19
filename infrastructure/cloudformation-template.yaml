@@ -62,6 +62,20 @@ Parameters:
     Description: S3 key for Summarize Lambda zip file
     Default: summarize-lambda.zip
 
+  VpcCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for VPC
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.small
+      - db.t4g.micro
+    Description: RDS instance type
+
 Resources:
   # ========================================
   # SNS Topic for Note Events
@@ -157,6 +171,7 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
       Policies:
         - PolicyName: NoteCrudLambdaPolicy
           PolicyDocument:
@@ -245,16 +260,23 @@ Resources:
       Role: !GetAtt NoteCrudLambdaRole.Arn
       Timeout: 30
       MemorySize: 512
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
       Environment:
         Variables:
           ENVIRONMENT: !Ref Environment
-          DB_HOST: !Ref PostgreSQLHost
-          DB_PORT: !Ref PostgreSQLPort
+          DB_HOST: !GetAtt NotesDatabase.Endpoint.Address
+          DB_PORT: !GetAtt NotesDatabase.Endpoint.Port
           DB_NAME: !Ref PostgreSQLDatabase
           DB_USER: !Ref PostgreSQLUsername
           DB_PASSWORD: !Ref PostgreSQLPassword
           SNS_TOPIC_ARN: !Ref NoteEventsTopic
-          CONNECTION_STRING: !Sub 'Host=${PostgreSQLHost};Port=${PostgreSQLPort};Database=${PostgreSQLDatabase};Username=${PostgreSQLUsername};Password=${PostgreSQLPassword};'
+          CONNECTION_STRING: !Sub 'Host=${NotesDatabase.Endpoint.Address};Port=${NotesDatabase.Endpoint.Port};Database=${PostgreSQLDatabase};Username=${PostgreSQLUsername};Password=${PostgreSQLPassword};'
+
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -622,6 +644,179 @@ Resources:
       Dimensions:
         - Name: QueueName
           Value: !GetAtt SummarizeDeadLetterQueue.QueueName
+  
+  # ========================================
+  # VPC and Networking
+  # ========================================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-notes-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-igw'
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.12.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetRouteAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetRouteAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+  
+  
+  # ========================================
+  # Security Groups
+  # ========================================
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${Environment}-lambda-sg'
+      GroupDescription: Lambda security group
+      VpcId: !Ref VPC
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${Environment}-db-sg'
+      GroupDescription: Database security group
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup
+
+  # ========================================
+  # RDS PostgreSQL
+  # ========================================
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub '${Environment}-db-subnet-group'
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  NotesDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub '${Environment}-notes-db'
+      DBName: !Ref PostgreSQLDatabase
+      Engine: postgres
+      EngineVersion: '15.4'
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: 20
+      StorageType: gp3
+      StorageEncrypted: true
+      MasterUsername: !Ref PostgreSQLUsername
+      MasterUserPassword: !Ref PostgreSQLPassword
+      VPCSecurityGroups:
+        - !GetAtt DBSecurityGroup.GroupId
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      PubliclyAccessible: false
+      BackupRetentionPeriod: 7
+      MultiAZ: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-notes-db'
 
 # ========================================
 # Outputs
@@ -686,3 +881,13 @@ Outputs:
   SummarizeLambdaRoleArn:
     Description: Summarize Lambda IAM Role ARN
     Value: !GetAtt SummarizeLambdaRole.Arn
+
+  DBEndpoint:
+    Description: RDS PostgreSQL endpoint
+    Value: !GetAtt NotesDatabase.Endpoint.Address
+    Export:
+      Name: !Sub '${Environment}-DBEndpoint'
+
+  DBPort:
+    Description: RDS PostgreSQL port
+    Value: !GetAtt NotesDatabase.Endpoint.Port

@@ -4,14 +4,6 @@
     "ParameterValue": "prod"
   },
   {
-    "ParameterKey": "PostgreSQLHost",
-    "ParameterValue": "localhost"
-  },
-  {
-    "ParameterKey": "PostgreSQLPort",
-    "ParameterValue": "5432"
-  },
-  {
     "ParameterKey": "PostgreSQLDatabase",
     "ParameterValue": "notesdb"
   },
@@ -21,7 +13,11 @@
   },
   {
     "ParameterKey": "PostgreSQLPassword",
-    "ParameterValue": "Password123!"
+    "ParameterValue": "YourSecurePassword123!"
+  },
+  {
+    "ParameterKey": "DBInstanceClass",
+    "ParameterValue": "db.t3.micro"
   },
   {
     "ParameterKey": "BedrockModelId",

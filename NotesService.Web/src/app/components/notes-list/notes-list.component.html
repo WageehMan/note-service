@@ -1,0 +1,96 @@
+<!-- src/app/components/notes-list/notes-list.component.html -->
+<div class="notes-container">
+  <header class="header">
+    <h1>📝 My Notes</h1>
+    <button class="btn btn-primary" (click)="openCreateForm()">
+      ➕ Create Note
+    </button>
+  </header>
+
+  <!-- Search Bar -->
+  <div class="search-box">
+    <input type="text"
+           class="search-input"
+           placeholder="🔍 Search notes..."
+           [(ngModel)]="searchTerm"
+           (input)="filterNotes()" />
+  </div>
+
+  <!-- Error Message -->
+  <div *ngIf="error" class="alert alert-error">
+    {{ error }}
+    <button class="close-btn" (click)="error = null">✕</button>
+  </div>
+
+  <!-- Loading Spinner -->
+  <div *ngIf="loading && !showForm" class="loading">
+    <div class="spinner"></div>
+    <p>Loading notes...</p>
+  </div>
+
+  <!-- Notes List -->
+  <div *ngIf="!loading && !showForm" class="notes-grid">
+    <div class="note-card" *ngFor="let note of filteredNotes">
+      <div class="note-header">
+        <span class="note-id">#{{ note.id }}</span>
+        <div class="note-actions">
+          <button class="btn-icon btn-edit" (click)="openEditForm(note)" title="Edit">
+            ✏️
+          </button>
+          <button class="btn-icon btn-delete" (click)="deleteNote(note.id)" title="Delete">
+            🗑️
+          </button>
+        </div>
+      </div>
+
+      <div class="note-content">
+        {{ note.content }}
+      </div>
+
+      <div *ngIf="note.summary" class="note-summary">
+        <strong>Summary:</strong> {{ note.summary }}
+      </div>
+
+      <div class="note-footer">
+        <small>Created: {{ formatDate(note.createdAt) }}</small>
+        <small *ngIf="note.updatedAt !== note.createdAt">
+          Updated: {{ formatDate(note.updatedAt) }}
+        </small>
+      </div>
+    </div>
+
+    <div *ngIf="filteredNotes.length === 0" class="empty-state">
+      <div class="empty-icon">📭</div>
+      <h3>No notes found</h3>
+      <p>{{ searchTerm ? 'Try a different search term' : 'Create your first note to get started!' }}</p>
+    </div>
+  </div>
+
+  <!-- Note Form Modal -->
+  <div *ngIf="showForm" class="modal-overlay" (click)="closeForm()">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h2>{{ editingNote ? 'Edit Note' : 'Create New Note' }}</h2>
+        <button class="close-btn" (click)="closeForm()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <label for="noteContent">Note Content</label>
+        <textarea id="noteContent"
+                  class="form-textarea"
+                  rows="10"
+                  [(ngModel)]="noteContent"
+                  placeholder="Enter your note content here..."></textarea>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeForm()">
+          Cancel
+        </button>
+        <button class="btn btn-primary" (click)="saveNote()" [disabled]="!noteContent.trim()">
+          {{ editingNote ? 'Update' : 'Create' }} Note
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
