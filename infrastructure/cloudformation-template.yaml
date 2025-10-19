@@ -801,7 +801,7 @@ Resources:
       DBInstanceIdentifier: !Sub '${Environment}-notes-db'
       DBName: !Ref PostgreSQLDatabase
       Engine: postgres
-      EngineVersion: '15.4'
+      EngineVersion: '15.7'
       DBInstanceClass: !Ref DBInstanceClass
       AllocatedStorage: 20
       StorageType: gp3
