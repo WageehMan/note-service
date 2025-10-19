@@ -144,7 +144,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::468691975112:role/GitHubActionsDeployRole
-          role-session-name: GitHub-${{ github.repository }}-${{ github.run_id }}
+          role-session-name: GitHub-${{ github.event.repository.name }}-${{ github.run_id }}
           aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 3600
       
