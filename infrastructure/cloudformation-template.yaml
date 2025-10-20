@@ -502,7 +502,7 @@ Resources:
         S3Bucket: !Ref LambdaS3Bucket
         S3Key: !Ref SummarizeLambdaKey
       Role: !GetAtt SummarizeLambdaRole.Arn
-      Timeout: 300
+      Timeout: 250
       MemorySize: 1024
       VpcConfig:
         SecurityGroupIds:
