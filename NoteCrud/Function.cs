@@ -257,8 +257,8 @@ public class Function
         {
             Id = Guid.NewGuid(),
             Content = noteRequest.Content.Trim(),
-            CreatedAt = DateTime.Now,
-            UpdatedAt = DateTime.Now
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
         };
 
         context.Logger.LogLine($"Creating note: {note.Id}");

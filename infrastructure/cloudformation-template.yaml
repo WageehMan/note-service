@@ -477,6 +477,7 @@ Resources:
           DB_NAME: !Ref PostgreSQLDatabase
           DB_USER: !Ref PostgreSQLUsername
           DB_PASSWORD: !Ref PostgreSQLPassword
+          CONNECTION_STRING: !Sub 'Host=${NotesDatabase.Endpoint.Address};Port=${NotesDatabase.Endpoint.Port};Database=${PostgreSQLDatabase};Username=${PostgreSQLUsername};Password=${PostgreSQLPassword};SSL Mode=Require;Trust Server Certificate=true'
           SNS_TOPIC_ARN: !Ref NoteEventsTopic
           AWS_REGION_NAME: !Ref AWS::Region
       Tags:
@@ -517,6 +518,7 @@ Resources:
           DB_NAME: !Ref PostgreSQLDatabase
           DB_USER: !Ref PostgreSQLUsername
           DB_PASSWORD: !Ref PostgreSQLPassword
+          CONNECTION_STRING: !Sub 'Host=${NotesDatabase.Endpoint.Address};Port=${NotesDatabase.Endpoint.Port};Database=${PostgreSQLDatabase};Username=${PostgreSQLUsername};Password=${PostgreSQLPassword};SSL Mode=Require;Trust Server Certificate=true'
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           AWS_REGION_NAME: !Ref AWS::Region
       Tags:
