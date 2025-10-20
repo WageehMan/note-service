@@ -256,7 +256,9 @@ public class Function
         var note = new Note
         {
             Id = Guid.NewGuid(),
-            Content = noteRequest.Content.Trim()
+            Content = noteRequest.Content.Trim(),
+            CreatedAt = DateTime.Now,
+            UpdatedAt = DateTime.Now
         };
 
         context.Logger.LogLine($"Creating note: {note.Id}");
@@ -323,7 +325,8 @@ public class Function
         var note = new Note
         {
             Id = noteId,
-            Content = noteRequest.Content.Trim()
+            Content = noteRequest.Content.Trim(),
+            UpdatedAt = DateTime.UtcNow
         };
 
         var result = await _dal.UpsertNoteAsync(note);

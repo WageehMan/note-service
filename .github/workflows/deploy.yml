@@ -305,29 +305,33 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: frontend-dist
-          path: dist
+          path: dist-download
       
-      - name: Find Angular build output
-        id: find-dist
+      - name: Find and prepare Angular build output
+        id: prepare-dist
         run: |
-          echo "Checking dist structure..."
-          ls -la dist/
+          echo "Downloaded structure:"
+          ls -la dist-download/
           
-          # Find the actual browser output directory
-          if [ -d "dist/notes-service-web/browser" ]; then
-            DIST_PATH="dist/notes-service-web/browser"
-          elif [ -d "dist/browser" ]; then
-            DIST_PATH="dist/browser"
-          elif [ -d "dist/notes-service-web" ]; then
-            DIST_PATH="dist/notes-service-web"
-          else
-            DIST_PATH="dist"
+          # Find index.html to locate the correct build folder
+          INDEX_PATH=$(find dist-download -name "index.html" -type f | head -1)
+          
+          if [ -z "$INDEX_PATH" ]; then
+            echo "❌ Error: index.html not found!"
+            exit 1
           fi
           
-          echo "Using dist path: $DIST_PATH"
-          echo "dist_path=$DIST_PATH" >> $GITHUB_OUTPUT
+          BUILD_DIR=$(dirname "$INDEX_PATH")
+          echo "Found build output at: $BUILD_DIR"
           
-          ls -la $DIST_PATH/
+          # Create a clean dist folder with files at root level
+          mkdir -p dist-clean
+          cp -r $BUILD_DIR/* dist-clean/
+          
+          echo "Clean dist structure:"
+          ls -la dist-clean/
+          
+          echo "dist_path=dist-clean" >> $GITHUB_OUTPUT
       
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -378,7 +382,11 @@ jobs:
       - name: Deploy to S3
         run: |
           BUCKET_NAME="notes-frontend-${{ github.event.inputs.environment || 'prod' }}"
-          DIST_PATH="${{ steps.find-dist.outputs.dist_path }}"
+          DIST_PATH="${{ steps.prepare-dist.outputs.dist_path }}"
+          
+          echo "Deploying from: $DIST_PATH"
+          echo "Files to deploy:"
+          ls -la $DIST_PATH/
           
           # Upload all files with cache headers
           aws s3 sync $DIST_PATH/ s3://$BUCKET_NAME/ \
@@ -398,13 +406,18 @@ jobs:
           echo "✅ Frontend deployed"
           echo "Frontend URL: $FRONTEND_URL"
           
+          # Verify deployment
+          echo ""
+          echo "Verifying S3 bucket contents:"
+          aws s3 ls s3://$BUCKET_NAME/ --recursive | head -20
+          
           echo "### Frontend Deployed! 🎉" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Frontend URL:** [$FRONTEND_URL]($FRONTEND_URL)" >> $GITHUB_STEP_SUMMARY
           echo "**API Endpoint:** ${{ needs.deploy-infrastructure.outputs.api_endpoint }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "🎯 Open the Frontend URL to access your application!" >> $GITHUB_STEP_SUMMARY
-
+   
   # ==========================================
   # CLEANUP ON FAILURE
   # ==========================================
