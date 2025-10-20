@@ -1,412 +1,234 @@
-﻿# Notes Service - Technical Assignment
+﻿# Notes Service
 
-A full-stack notes management application with AI-powered summarization, built for the TFS Complex Integrations Team.
+A full-stack serverless notes application with AI-powered summarization.
 
-## 📋 Table of Contents
-- [Overview](#overview)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Design Decisions](#design-decisions)
-- [Setup Instructions](#setup-instructions)
-- [API Documentation](#api-documentation)
-- [Project Structure](#project-structure)
+## 🔗 Quick Links
 
----
-
-## 🎯 Overview
-
-This is a serverless notes application that allows users to create, read, update, and delete notes with advanced search and sorting capabilities. The application features asynchronous AI-powered summarization to provide automatic summaries of note content.
-
-**Live Demo:** [Your deployed URL]  
-**GitHub Repository:** [Your repo URL]
+- **Live Demo:** http://notes-frontend-prod.s3-website-us-east-1.amazonaws.com
+- **API Endpoint:** https://u1t4q70g86.execute-api.us-east-1.amazonaws.com/prod/notes
+- **GitHub:** https://github.com/WageehMan/note-service
 
 ---
 
 ## ✨ Features
 
-### Core Features ✅
-- **Complete CRUD Operations**: Create, Read, Update, and Delete notes
-- **Search Functionality**: Full-text search across note content
-- **Sort Functionality**: Sort notes by date, title, or relevance
-- **Responsive UI**: Works seamlessly on desktop and mobile devices
-
-### Nice-to-Have Features ✅
-- **AI Summarization**: Automatic AI-generated summaries for notes
-- **Asynchronous Processing**: Non-blocking summarization using event-driven architecture
-- **Real-time Updates**: Notes appear immediately while summaries generate in background
+- **CRUD Operations**: Create, read, update, and delete notes
+- **Search**: Full-text search across note content
+- **AI Summarization**: Automatic summaries using AWS Bedrock
+- **Asynchronous Processing**: Non-blocking summarization via SQS
+- **Responsive UI**: Angular-based frontend
 
 ---
 
 ## 🏗 Architecture
-
-### High-Level Architecture Diagram
-
 ```
-┌──────────┐
-│ Frontend │
-│(React/   │
-│ Angular) │
-└─────┬────┘
-      │
-      ▼
-┌─────────────┐
-│ API Gateway │
-│  (Backend)  │
-└──┬────┬────┬┘
-   │    │    │
-   ▼    ▼    ▼
-┌────┐ ┌────┐ ┌────┐
-│POST│ │GET │ │DEL │
-│    │ │    │ │    │
-└─┬──┘ └──┬─┘ └──┬─┘
-  │       │      │
-  ▼       ▼      ▼
-┌─────────────────────┐
-│  Lambda: Note-CRUD  │
-└────────┬────────────┘
-         │
-         ▼
-    ┌────────┐
-    │  DAL   │
-    │(Data   │
-    │Access  │
-    │Layer)  │
-    └───┬────┘
-        │
-        ▼
-   ┌─────────────┐
-   │ PostgreSQL  │
-   └─────────────┘
-   
-After Successful Save:
-┌──────────────┐
-│ Lambda:      │
-│ Upsert       │
-└──────┬───────┘
-       │
-       ▼
-   ┌───────┐
-   │  SNS  │
-   │ Topic │
-   └───┬───┘
-       │
-       ▼
-   ┌───────┐
-   │  SQS  │
-   │ Queue │
-   └───┬───┘
-       │
-       ▼
-┌──────────────┐
-│ Lambda:      │
-│ Summarize    │
-└──────┬───────┘
-       │
-       ▼
-   ┌────────┐
-   │  DAL   │
-   └───┬────┘
-       │
-       ▼
-   ┌─────────────┐
-   │ PostgreSQL  │
-   └─────────────┘
+                    ┌──────────────┐
+                    │   Frontend   │
+                    │   (Angular)  │
+                    └──────┬───────┘
+                           │
+                           ▼
+                    ┌──────────────┐
+                    │ API Backend  │
+                    │ (API Gateway)│
+                    └──────┬───────┘
+                           │
+                    ┌──────┴───────┐
+                    │   Post       │
+                    │   Get        │
+                    │   Delete     │
+                    ▼              │
+            ┌────────────────┐    │
+            │   NOTE CRUD    │    │
+            │    (Lambda)    │◄───┘
+            └───────┬────────┘
+                    │
+                    ▼
+            ┌────────────────┐
+            │      DAL       │
+            │ (Data Access)  │
+            └───────┬────────┘
+                    │
+                    ▼
+            ┌────────────────┐
+            │  PostgreSQL    │
+            │      (RDS)     │
+            └────────────────┘
+
+    After Successful Save:
+    
+    ┌────────────────┐
+    │   NOTE CRUD    │
+    │    (Lambda)    │
+    └───────┬────────┘
+            │
+            ▼
+        ┌───────┐
+        │  SNS  │
+        │ Topic │
+        └───┬───┘
+            │
+            ▼
+        ┌───────┐
+        │  SQS  │
+        │ Queue │
+        └───┬───┘
+            │
+            ▼
+    ┌────────────────┐
+    │   Summarize    │
+    │    (Lambda)    │
+    └───────┬────────┘
+            │
+            ▼
+    ┌────────────────┐
+    │      DAL       │
+    │    (Update)    │
+    └───────┬────────┘
+            │
+            ▼
+    ┌────────────────┐
+    │  PostgreSQL    │
+    │      (RDS)     │
+    └────────────────┘
 ```
 
 ### Architecture Flow
 
-
-1. **Frontend → API Backend**: User interacts with the application
-2. **API Backend → NOTE CRUD Lambda**: Single Lambda handles all CRUD operations
-   - GET /notes - List/search notes with sorting
-   - GET /notes/{id} - Fetch single note
-   - POST /notes - Create new note
-   - PUT /notes/{id} - Update existing note
-   - DELETE /notes/{id} - Delete note
-3. **Lambda → DAL → Database**: All database operations abstracted through DAL
+1. **Frontend → API Backend**: User interacts with Angular application
+2. **API Backend → NOTE CRUD Lambda**: Handles all CRUD operations (POST, GET, DELETE)
+3. **Lambda → DAL → PostgreSQL**: All database operations abstracted through DAL
 4. **Event-Driven Summarization** (after successful save):
-   - Lambda publishes event to SNS
-   - SQS receives message
-   - Summarize Lambda processes asynchronously
-   - Summary updates note via DAL
-   
+   - NOTE CRUD Lambda publishes event to SNS
+   - SQS receives message from SNS
+   - Summarize Lambda processes message asynchronously
+   - Summary updates note via DAL → PostgreSQL
+
 ---
 
 ## 🛠 Tech Stack
 
-### Frontend
-- **Framework**: Angular 17
-- **Styling**: Tailwind CSS
-- **State Management**: React Context API / Redux
-- **HTTP Client**: Axios
-
-### Backend
-- **.NET**: 8
-- **Language**: C#
-- **Framework**: ASP.NET Core Web API
-
-### AWS Services
-- **Lambda**: Serverless compute for business logic
-- **API Gateway**: RESTful API endpoint management
-- **SNS**: Publish/subscribe messaging for events
-- **SQS**: Message queue for reliable async processing
-- **CloudFormation/CDK**: Infrastructure as Code
-
-### Database
-- **PostgreSQL**: Relational database (Docker containerized)
-- **ORM**: Dapper (lightweight, performant)
-
-### AI/ML
-- ** AWS Bedrock**
+- **Frontend**: Angular 17, Standalone Components
+- **Backend**: .NET 8, C#
+- **AWS**: Lambda, API Gateway, RDS (PostgreSQL), SNS, SQS, Bedrock
+- **Infrastructure**: CloudFormation, GitHub Actions
+- **Database**: PostgreSQL with Dapper ORM
 
 ---
 
-## 🎯 Design Decisions
-
-### 1. Data Access Layer (DAL) Pattern
-
-**Decision**: Implement a dedicated Data Access Layer that abstracts all database operations.
-
-**Rationale**:
-- ✅ **Database Agnostic**: Can switch from PostgreSQL to MySQL, DynamoDB, or any other database with minimal changes
-- ✅ **Separation of Concerns**: Business logic separated from data persistence
-- ✅ **Testability**: Easy to mock DAL for unit testing
-- ✅ **Maintainability**: Single place for all database queries
-- ✅ **Consistency**: All Lambdas use the same data access patterns
-
-**Alternative Considered**: Direct database calls in each Lambda
-
-**Why Not**: Creates tight coupling and makes database migration difficult
-
----
-
-### 2. Application-Level Events (SNS/SQS) vs Database Triggers
-
-**Decision**: Use SNS/SQS for event-driven summarization instead of PostgreSQL triggers.
-
-**Rationale**:
-- ✅ **Database Portability**: Not locked into PostgreSQL-specific features
-- ✅ **Visibility**: All business logic visible in application code, not hidden in database
-- ✅ **Testability**: Easier to test and debug application code vs triggers
-- ✅ **Flexibility**: Can easily add more event subscribers (notifications, analytics, etc.)
-- ✅ **Aligns with Team**: Shows complex integration patterns for Complex Integrations Team
-
-**Alternative Considered**: PostgreSQL AFTER INSERT/UPDATE triggers
-
-**Why Not**: Creates vendor lock-in and makes logic harder to test and maintain
-
-**Trade-offs Acknowledged**:
-- PostgreSQL triggers would eliminate race conditions more elegantly
-- Application-level approach requires careful idempotent design
-- Decision prioritizes long-term maintainability over short-term simplicity
-
----
-
-### 3. Handling Race Conditions
-
-**Problem**: Async summarization could cause race conditions where summary updates before initial save completes.
-
-**Solution**: Multi-layered approach
-1. **Ordered Publishing**: SNS event only published AFTER successful database save
-2. **DAL Returns Change Detection**: UpsertNoteAsync returns whether content changed
-3. **Smart Publishing**: Only publish to SNS if content actually changed
-4. **Idempotent Updates**: Summary update uses `WHERE summary IS NULL OR summary = ''`
-
-**Implementation**:
-```csharp
-public class UpsertResult
-{
-    public Note SavedNote { get; set; }
-    public bool ContentChanged { get; set; }
-}
-
-// Only publish if content changed
-if (result.ContentChanged)
-{
-    await PublishToSNS(result.SavedNote);
-}
-```
-
-This prevents:
-- ❌ Publishing events for unchanged content
-- ❌ Race conditions between save and summarize
-- ❌ Duplicate summarization work
-- ❌ Infinite loops from updates triggering more updates
-
----
-
-### 4. Idempotency Design
-
-**Decision**: Make all operations idempotent at multiple levels.
-
-**Implementation**:
-
-**At Database Level**:
-```sql
-UPDATE notes 
-SET summary = @summary, updated_at = NOW()
-WHERE id = @noteId 
-  AND (summary IS NULL OR summary = '')
--- Only updates if summary doesn't exist yet
-```
-
-**At Lambda Level**:
-- SQS retries are safe - duplicate messages won't cause duplicate summaries
-- DELETE is naturally idempotent
-- UPSERT uses INSERT...ON CONFLICT
-
-**Rationale**: Distributed systems require idempotency for reliability
-
----
-
-### 5. Minimal Coupling in Summarize Lambda
-
-**Decision**: Summarize Lambda doesn't read from database to check if summary exists.
-
-**Rationale**:
-- ✅ **Trust Boundary**: Summarize trusts that Upsert made the right decision to publish
-- ✅ **Minimal Coupling**: Summarize only needs write operations, not read
-- ✅ **Performance**: Avoids extra database round-trip
-- ✅ **Simpler Interface**: Cleaner contract between services
-
-**Alternative Considered**: Summarize Lambda checks if note already has summary
-
-**Why Not**: Creates unnecessary coupling to database schema and duplicates logic
-
----
-
-### 6. CloudFormation Template Included
-
-**Decision**: Provide complete CloudFormation template for one-command deployment.
-
-**Resources Defined**:
-- Lambda Functions (Upsert, List/Fetch, Delete, Summarize)
-- API Gateway with REST endpoints
-- SNS Topic for note events
-- SQS Queue with Dead Letter Queue
-- IAM Roles and Policies
-- RDS PostgreSQL instance (or connection to Docker PostgreSQL)
-- VPC configuration for Lambda-to-RDS connectivity
-
-**Deployment**: `aws cloudformation create-stack --template-file template.yaml`
-
----
-### 7. Single Lambda for CRUD vs Multiple Lambdas
-
-**Decision**: Use one Lambda function to handle all CRUD operations instead of separate Lambdas.
-
-**Rationale**:
-- ✅ **Appropriate Scale**: For a "tiny notes service", one Lambda is sufficient
-- ✅ **Simpler Deployment**: Single function to build, test, and deploy
-- ✅ **Reduced Cold Starts**: One warm Lambda vs multiple separate ones
-- ✅ **Easier Maintenance**: All CRUD logic in one place
-- ✅ **Lower Costs**: Fewer Lambda invocations and executions
-
-**When to Split**: 
-If this service grew to handle millions of requests with different scaling 
-patterns (e.g., 90% reads, 10% writes), then splitting into separate Lambdas 
-would make sense for independent scaling.
-
-**For Now**: Single Lambda with route handling is the right balance of 
-simplicity and demonstration of AWS Lambda capabilities.
-
----
-
-## 🚀 Setup Instructions
+## 🚀 Setup & Deployment
 
 ### Prerequisites
-- Docker & Docker Compose
+- AWS Account
+- GitHub Account
 - .NET 8 SDK
-- Node.js 18+ and npm/yarn
-- AWS CLI configured (for deployment)
-- OpenAI API key (or AWS Bedrock access)
+- Node.js 18+
 
-### Local Development
+### 1. Set Up OIDC for GitHub Actions
 
-#### 1. Clone Repository
+**Create OIDC Provider in AWS:**
 ```bash
-git clone [your-repo-url]
-cd notes-service
+# Upload the CloudFormation template via AWS Console
+# or use AWS CLI:
+aws cloudformation create-stack \
+  --stack-name github-oidc-setup \
+  --template-body file://infrastructure/oidc-github-setup.yaml \
+  --parameters ParameterKey=GitHubOrg,ParameterValue=WageehMan \
+               ParameterKey=RepositoryName,ParameterValue=note-service \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --region us-east-1
 ```
 
-#### 2. Start PostgreSQL Database
+**Via AWS Console:**
+1. Go to AWS CloudFormation console
+2. Click **Create stack** → **With new resources**
+3. Choose **Upload a template file**
+4. Upload `infrastructure/oidc-github-setup.yaml`
+5. Enter parameters:
+   - **GitHubOrg**: `WageehMan`
+   - **RepositoryName**: `note-service`
+6. Check **I acknowledge that AWS CloudFormation might create IAM resources**
+7. Click **Create stack**
+8. Wait for `CREATE_COMPLETE` status
+
+This creates:
+- ✅ OIDC Identity Provider for GitHub
+- ✅ IAM Role with deployment permissions
+- ✅ Trust policy for your repository
+
+### 2. Configure GitHub Secrets
+
+Add these to your repository settings (`Settings` → `Secrets and variables` → `Actions`):
+```
+AWS_REGION=us-east-1
+```
+
+That's it! The workflow uses OIDC - no access keys needed.
+
+### 3. Deploy Application
+
+**Automatic Deployment:**
 ```bash
-cd infrastructure
+git add .
+git commit -m "Deploy notes service"
+git push origin main
+```
+
+GitHub Actions will automatically:
+1. Build .NET Lambdas
+2. Build Angular frontend
+3. Deploy infrastructure via CloudFormation
+4. Upload Lambda packages to S3
+5. Deploy frontend to S3 bucket
+6. Configure API Gateway
+
+**Manual Deployment (if needed):**
+```bash
+# Deploy infrastructure
+aws cloudformation create-stack \
+  --stack-name NoteServiceStack \
+  --template-body file://infrastructure/cloudformation-template.yaml \
+  --parameters file://infrastructure/parameters.json \
+  --capabilities CAPABILITY_NAMED_IAM
+```
+
+### 4. Local Development
+
+**Start Database:**
+```bash
 docker-compose up -d
 ```
 
-This starts PostgreSQL on `localhost:5432` with:
-- Database: `notesdb`
-- Username: `notesuser`
-- Password: `notespass`
-
-#### 3. Run Database Migrations
+**Run Backend:**
 ```bash
-cd backend
-dotnet ef database update
-# Or run SQL scripts in /database/migrations/
-```
-
-#### 4. Configure Backend
-```bash
-cd backend
-cp appsettings.example.json appsettings.Development.json
-# Edit connection strings and API keys
-```
-
-**Required Configuration**:
-```json
-{
-  "ConnectionStrings": {
-    "PostgreSQL": "Host=localhost;Port=5432;Database=notesdb;Username=notesuser;Password=notespass"
-  },
-  "AWS": {
-    "Region": "us-east-1",
-    "SNSTopicArn": "arn:aws:sns:region:account:note-events"
-  },
-  "OpenAI": {
-    "ApiKey": "your-api-key",
-    "Model": "gpt-4"
-  }
-}
-```
-
-#### 5. Run Backend
-```bash
-cd backend
+cd NoteCrud
 dotnet run
-# API available at https://localhost:5001
 ```
 
-#### 6. Run Frontend
+**Run Frontend:**
 ```bash
-cd frontend
+cd NotesService.Web
 npm install
 npm start
-# App available at http://localhost:3000
-```
-
-### AWS Deployment
-
-#### Using CloudFormation
-```bash
-aws cloudformation create-stack \
-  --stack-name notes-service \
-  --template-body file://cloudformation-template.yaml \
-  --parameters ParameterKey=DatabasePassword,ParameterValue=YourSecurePassword \
-  --capabilities CAPABILITY_IAM
 ```
 
 ---
 
 ## 📚 API Documentation
 
-### Base URL
-- **Local**: `http://localhost:5001/api`
-- **AWS**: `https://[api-id].execute-api.[region].amazonaws.com/prod/api`
+**Base URL:** `https://u1t4q70g86.execute-api.us-east-1.amazonaws.com/prod`
 
 ### Endpoints
+
+#### List All Notes
+```http
+GET /notes
+```
+
+#### Get Single Note
+```http
+GET /notes/{id}
+```
 
 #### Create Note
 ```http
@@ -414,17 +236,7 @@ POST /notes
 Content-Type: application/json
 
 {
-  "id": "00000000-0000-0000-0000-000000000000",
-  "content": "This is my note content"
-}
-
-Response: 200 OK
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "content": "This is my note content",
-  "summary": null,
-  "createdAt": "2025-10-17T10:30:00Z",
-  "updatedAt": "2025-10-17T10:30:00Z"
+  "content": "Your note content here"
 }
 ```
 
@@ -434,178 +246,113 @@ PUT /notes/{id}
 Content-Type: application/json
 
 {
-  "content": "Updated note content"
-}
-
-Response: 200 OK
-```
-
-#### Get All Notes (with Search & Sort)
-```http
-GET /notes?search=keyword&sortBy=createdAt&sortOrder=desc
-
-Response: 200 OK
-[
-  {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "content": "Note content",
-    "summary": "AI-generated summary",
-    "createdAt": "2025-10-17T10:30:00Z",
-    "updatedAt": "2025-10-17T10:30:00Z"
-  }
-]
-```
-
-**Query Parameters**:
-- `search` (optional): Search term for full-text search
-- `sortBy` (optional): Field to sort by (`createdAt`, `updatedAt`, `content`)
-- `sortOrder` (optional): `asc` or `desc` (default: `desc`)
-
-#### Get Single Note
-```http
-GET /notes/{id}
-
-Response: 200 OK
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "content": "Note content",
-  "summary": "AI-generated summary",
-  "createdAt": "2025-10-17T10:30:00Z",
-  "updatedAt": "2025-10-17T10:30:00Z"
+  "content": "Updated content"
 }
 ```
 
 #### Delete Note
 ```http
 DELETE /notes/{id}
-
-Response: 204 No Content
 ```
 
 ---
 
-## 📁 Project Structure
+## 🎯 Key Design Decisions
 
+### 1. Data Access Layer (DAL)
+- Abstracts database operations between Lambdas and PostgreSQL
+- Enables easy database switching
+- Single source of truth for all queries
+- Used by both NOTE CRUD and Summarize Lambdas
+
+### 2. Event-Driven Summarization
+- SNS/SQS for async processing after successful save
+- Database agnostic (no triggers)
+- Decouples summarization from main CRUD flow
+- Easy to add more event subscribers
+
+### 3. Idempotency
+- Safe SQS retries
+- Conditional summary updates (`WHERE summary IS NULL OR summary = ''`)
+- No duplicate processing
+- Race condition protection
+
+### 4. Single Lambda for CRUD
+- One Lambda handles POST, GET, and DELETE
+- Simpler deployment and maintenance
+- Lower costs for this scale
+- Fewer cold starts
+
+---
+
+## 📁 Project Structure
 ```
-notes-service/
-├── frontend/                      # React/Angular frontend
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── NoteList.tsx
-│   │   │   ├── NoteForm.tsx
-│   │   │   └── SearchBar.tsx
-│   │   ├── services/
-│   │   │   └── api.ts
-│   │   ├── App.tsx
-│   │   └── index.tsx
-│   └── package.json
-│
-├── backend/                       # .NET 8/9 Backend
-│   ├── src/
-│   │   ├── API/                  # API Gateway / Web API
-│   │   │   ├── Controllers/
-│   │   │   └── Program.cs
-│   │   │
-│   │   ├── Lambdas/              # AWS Lambda Functions
-│   │   │   ├── UpsertLambda/
-│   │   │   │   └── Function.cs
-│   │   │   ├── ListFetchLambda/
-│   │   │   │   └── Function.cs
-│   │   │   ├── DeleteLambda/
-│   │   │   │   └── Function.cs
-│   │   │   └── SummarizeLambda/
-│   │   │       └── Function.cs
-│   │   │
-│   │   ├── DAL/                  # Data Access Layer
-│   │   │   ├── INotesDAL.cs
-│   │   │   ├── NotesDAL.cs
-│   │   │   └── Models/
-│   │   │       ├── Note.cs
-│   │   │       └── UpsertResult.cs
-│   │   │
-│   │   ├── Services/             # Business Logic
-│   │   │   ├── IAISummarizationService.cs
-│   │   │   └── OpenAISummarizationService.cs
-│   │   │
-│   │   └── Infrastructure/       # Cross-cutting concerns
-│   │       ├── ConnectionFactory.cs
-│   │       └── Configuration/
-│   │
-│   └── tests/                    # Unit & Integration Tests
-│       ├── DAL.Tests/
-│       └── Lambda.Tests/
-│
-├── infrastructure/               # IaC & Database
-│   ├── cloudformation-template.yaml
-│   ├── cdk/                     # AWS CDK (optional)
-│   │   ├── lib/
-│   │   └── bin/
-│   ├── docker-compose.yml       # PostgreSQL container
-│   └── database/
-│       ├── migrations/
-│       └── seed-data.sql
-│
-├── docs/
-│   ├── architecture-diagram.png
-│   └── api-documentation.md
-│
-└── README.md
+note-service/
+├── NotesService.Web/          # Angular frontend
+├── NoteCrud/                  # Lambda: CRUD operations
+├── Summarize/                 # Lambda: AI summarization
+├── NoteService.DAL/           # Data access layer
+└── infrastructure/
+    ├── cloudformation-template.yaml
+    ├── parameters.json
+    ├── oidc-github-setup.yaml
+    └── .github/workflows/
+```
+
+---
+
+## 🔧 Environment Variables
+
+The application uses these environment variables (configured in CloudFormation):
+```bash
+DATABASE_CONNECTION_STRING  # RDS PostgreSQL connection
+AWS_REGION                 # AWS region (us-east-1)
+SNS_TOPIC_ARN             # SNS topic for events
+BEDROCK_MODEL_ID          # AWS Bedrock model
 ```
 
 ---
 
 ## 🧪 Testing
-
-### Unit Tests
 ```bash
-cd backend/tests
+# Run all tests
+dotnet test
+
+# Run specific project
+cd NoteService.DAL.Tests
 dotnet test
 ```
 
-### Integration Tests
-```bash
-# Start test database
-docker-compose -f docker-compose.test.yml up -d
-
-# Run integration tests
-dotnet test --filter Category=Integration
-```
-
-### Test Coverage
-- DAL methods with in-memory database
-- Lambda handler logic with mocked dependencies
-- Search and sort functionality
-- Idempotent operations
-
 ---
 
-## 🔐 Security Considerations
+## 📊 Monitoring
 
-1. **API Authentication**: Add JWT or API Key authentication (not implemented for assignment scope)
-2. **Input Validation**: All inputs validated and sanitized
-3. **SQL Injection Prevention**: Parameterized queries via Dapper
-4. **Secrets Management**: Use AWS Secrets Manager for API keys (not hardcoded)
-5. **CORS**: Properly configured for frontend domain
-6. **Rate Limiting**: API Gateway throttling configured
-
----
-
-## 📊 Monitoring & Observability
-
-### CloudWatch Metrics
-- Lambda invocation count, duration, errors
+View logs and metrics in AWS CloudWatch:
+- Lambda execution logs (NOTE CRUD & Summarize)
+- API Gateway access logs
 - SQS queue depth and message age
-- API Gateway 4xx/5xx errors
-
-### Logging
-- Structured logging in all Lambdas
-- Correlation IDs for request tracing
-- Log aggregation in CloudWatch Logs
-
-### Alerts
-- Dead Letter Queue messages (failed summarizations)
-- Lambda error rate > 5%
-- API Gateway latency > 3s
+- Dead letter queue alerts
 
 ---
 
+## 🔐 Security
+
+- ✅ OIDC authentication (no long-lived credentials)
+- ✅ Parameterized SQL queries (Dapper)
+- ✅ IAM least-privilege roles
+- ✅ VPC isolation for RDS
+- ✅ CORS configured for frontend
+
+---
+
+## 📝 License
+
+MIT
+
+---
+
+## 👤 Author
+
+**Wageeh Man**
+- GitHub: [@WageehMan](https://github.com/WageehMan)
+- Repository: [note-service](https://github.com/WageehMan/note-service)
