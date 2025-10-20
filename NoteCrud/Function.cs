@@ -85,12 +85,12 @@ public class Function
 
                 -- Create trigger function for updated_at
                 CREATE OR REPLACE FUNCTION update_updated_at_column()
-                RETURNS TRIGGER AS $
+                RETURNS TRIGGER AS $$
                 BEGIN
                     NEW.updated_at = CURRENT_TIMESTAMP;
                     RETURN NEW;
                 END;
-                $ language 'plpgsql';
+                $$ language 'plpgsql';
 
                 -- Create trigger
                 DROP TRIGGER IF EXISTS update_notes_updated_at ON notes;
