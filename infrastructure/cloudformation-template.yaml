@@ -803,7 +803,7 @@ Resources:
       Engine: postgres
       EngineVersion: '15.7'
       DBInstanceClass: !Ref DBInstanceClass
-      AllocatedStorage: 20
+      AllocatedStorage: 15
       StorageType: gp3
       StorageEncrypted: true
       MasterUsername: !Ref PostgreSQLUsername
