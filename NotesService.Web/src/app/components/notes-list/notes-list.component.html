@@ -32,7 +32,7 @@
   <div *ngIf="!loading && !showForm" class="notes-grid">
     <div class="note-card" *ngFor="let note of filteredNotes">
       <div class="note-header">
-        <span class="note-id">#{{ note.id }}</span>
+        <span class="note-id">#{{ formatId(note.id) }}</span>
         <div class="note-actions">
           <button class="btn-icon btn-edit" (click)="openEditForm(note)" title="Edit">
             ✏️
@@ -47,8 +47,12 @@
         {{ note.content }}
       </div>
 
+      <!-- Show summary or summarizing indicator -->
       <div *ngIf="note.summary" class="note-summary">
         <strong>Summary:</strong> {{ note.summary }}
+      </div>
+      <div *ngIf="!note.summary && isSummarizing(note)" class="note-summary summarizing">
+        <em>⏳ Generating AI summary...</em>
       </div>
 
       <div class="note-footer">

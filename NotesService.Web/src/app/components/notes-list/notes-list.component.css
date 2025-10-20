@@ -323,3 +323,9 @@
     width: 95%;
   }
 }
+
+.note-summary.summarizing {
+  background: #fff4e6;
+  border-left-color: #ff9800;
+  color: #e65100;
+}
