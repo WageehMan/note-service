@@ -26,7 +26,7 @@ env:
   DOTNET_VERSION: '8.0.x'
   NODE_VERSION: '20.x'
   S3_BUCKET: cf-templates-z03e1ivmdu5u-us-east-1
-  STACK_NAME: notes-service-${{ github.event.inputs.environment || 'prod' }}
+  STACK_NAME: NoteServiceStack
 
 jobs:
   # ==========================================
