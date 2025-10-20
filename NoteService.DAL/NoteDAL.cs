@@ -16,6 +16,7 @@ namespace NoteService.DAL
         public NotesDAL(string connectionString)
         {
             _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
+            DapperConfig.Initialize();
         }
 
         /// <summary>
@@ -202,6 +203,21 @@ namespace NoteService.DAL
                 updated_at = NOW()
             WHERE id = @noteId
         ", new { noteId, summary });
+        }
+    }
+
+    public static class DapperConfig
+    {
+        private static bool _initialized = false;
+
+        public static void Initialize()
+        {
+            if (_initialized) return;
+
+            // Map PascalCase to snake_case
+            DefaultTypeMap.MatchNamesWithUnderscores = true;
+
+            _initialized = true;
         }
     }
 }
